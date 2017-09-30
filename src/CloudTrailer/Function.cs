@@ -10,6 +10,7 @@ using Amazon.IdentityManagement.Model;
 using Amazon.Lambda.Core;
 using Amazon.Lambda.SNSEvents;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.SimpleNotificationService;
 using Amazon.SimpleNotificationService.Model;
 using CloudTrailer.Models;
@@ -49,6 +50,36 @@ namespace CloudTrailer
             context.Logger.LogLine(JsonConvert.SerializeObject(evnt));
 
             // ### Level 2 - Retrieve Logs from S3
+            var msg = JsonConvert.DeserializeObject<CloudTrailMessage>(evnt.Records[0].Sns.Message);
+            foreach(var objectKey in msg.S3ObjectKey)
+            {
+                GetObjectRequest request = new GetObjectRequest 
+                {
+                    BucketName = msg.S3Bucket,
+                    Key = objectKey
+                };
+                using (GetObjectResponse response = await S3Client.GetObjectAsync(request))  
+                using (MemoryStream data = new MemoryStream())
+                {
+                    await response.ResponseStream.CopyToAsync(data);
+                    var records = await ExtractCloudTrailRecordsAsync(context.Logger, data.ToArray());
+                    context.Logger.LogLine(JsonConvert.SerializeObject(records));
+                    foreach(var record in records.Records)
+                    {
+                        if(record.EventName == "CreateUser")
+                        {
+                            PublishRequest req = new PublishRequest
+                            {
+                                Message = JsonConvert.SerializeObject(record),
+                                Subject = ("Suspicious Alert"),
+                                TopicArn = ("arn:aws:sns:us-west-2:068486113320:suspicious")
+                            };
+ 
+                            PublishResponse result = await SnsClient.PublishAsync(req);
+                        }
+                    }
+                }
+            }
 
             // ### Level 3 - Filter for specific events and send alerts
 
